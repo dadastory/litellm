@@ -2196,6 +2196,8 @@ async def test_model_connection(
                 deployment_by_id = None
                 if request_model_id:
                     deployment_by_id = llm_router.get_deployment(model_id=request_model_id)
+                    if deployment_by_id is None:
+                        raise HTTPException(status_code=404, detail="Model deployment not found")
 
                 if deployment_by_id is not None:
                     config_litellm_params = deployment_by_id.litellm_params.model_dump(exclude_none=True)
@@ -2222,6 +2224,8 @@ async def test_model_connection(
                         # variables from proxy config.
                         config_litellm_params = dict(deployments[0].get("litellm_params", {}))
                         loaded_model_info = dict(deployments[0].get("model_info") or {})
+            except HTTPException:
+                raise
             except Exception as e:
                 verbose_proxy_logger.debug(
                     "Could not find model %s in router: %s. Proceeding with request params only.", model_name, e
@@ -2229,16 +2233,38 @@ async def test_model_connection(
 
         reject_server_owned_wif_params(request_litellm_params)
         # Merge: config params (from proxy config) as base, request params override
+        config_base: Final = _config_base_for_health_check(
+            config_litellm_params,
+            request_litellm_params,
+            allow_client_side_credentials=general_settings.get("allow_client_side_credentials") is True,
+        )
+        inherits_connection: Final = _request_inherits_config_credentials(
+            config_litellm_params,
+            request_litellm_params,
+            allow_client_side_credentials=general_settings.get("allow_client_side_credentials") is True,
+        )
         litellm_params = {
-            **_config_base_for_health_check(
-                config_litellm_params,
-                request_litellm_params,
-                allow_client_side_credentials=general_settings.get("allow_client_side_credentials") is True,
-            ),
+            **{
+                key: value
+                for key, value in config_base.items()
+                if inherits_connection or key != "use_chat_completions_api"
+            },
             **request_litellm_params,
         }
-
-        resolved_model_info: Final = loaded_model_info if loaded_model_info is not None else model_info
+        # Loaded ownership remains authoritative; only endpoint selection is a draft override.
+        authoritative_info: Final = loaded_model_info if loaded_model_info is not None else (model_info or {})
+        resolved_model_info: Final = {
+            **{
+                key: value
+                for key, value in authoritative_info.items()
+                if inherits_connection or key != "supported_endpoints"
+            },
+            **(
+                {"supported_endpoints": model_info["supported_endpoints"]}
+                if model_info is not None and "supported_endpoints" in model_info
+                else {}
+            ),
+        }
         probe_model_info: Final = _model_info_for_mode_resolution(
             _OBJECT_MAPPING.validate_python(resolved_model_info or {}),
             stored_params=_OBJECT_MAPPING.validate_python(config_litellm_params),
@@ -2270,6 +2296,11 @@ async def test_model_connection(
             or _string_mode_or_bad_request(raw_params_mode)
             or resolve_health_check_mode(probe_model_info, _OBJECT_MAPPING.validate_python(litellm_params))
         )
+
+        if probe_mode == "anthropic_messages":
+            # Native Messages passthrough is selected by deployment metadata.
+            # Without it a health check can take a different route than serving.
+            litellm_params["model_info"] = resolved_model_info
 
         result: Final = await run_with_timeout(
             litellm.ahealth_check(

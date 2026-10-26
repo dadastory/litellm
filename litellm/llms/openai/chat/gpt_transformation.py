@@ -807,13 +807,12 @@ class OpenAIGPTConfig(BaseLLMModelInfo, BaseConfig):
         api_base: str | None, bearer_token: str | None
     ) -> list[str]:  # mutable-ok: matches get_models' list[str] contract shared by every provider override
         parsed_url: Final = httpx.URL(api_base or "https://api.openai.com")
-        port_suffix: Final = f":{parsed_url.port}" if parsed_url.port else ""
+        base_path: Final = parsed_url.path.rstrip("/") or "/v1"
         response: Final = litellm.module_level_client.get(
-            url=f"{parsed_url.scheme}://{parsed_url.host}{port_suffix}/v1/models",
+            url=str(parsed_url.copy_with(path=f"{base_path}/models")),
             headers={"Authorization": f"Bearer {bearer_token}"},
         )
-        if response.status_code != 200:
-            raise Exception(f"Failed to get models: {response.text}")
+        response.raise_for_status()
         return [model["id"] for model in response.json()["data"]]
 
     @staticmethod

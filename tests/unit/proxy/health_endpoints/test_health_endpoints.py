@@ -4802,3 +4802,40 @@ async def test_health_services_endpoint_langfuse_missing_keys_errors(monkeypatch
     with pytest.raises(ProxyException, match="auth_check failed") as raised:
         await health_services_endpoint(service="langfuse")
     assert "connection refused by lf.internal.example" in str(raised.value.message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ("/v1/chat/completions", "/v1/responses", "/v1/messages"))
+async def test_messages_connection_draft_overrides_endpoint_but_not_ownership(endpoint: str):
+    deployment: Final = {
+        "model_name": "probe",
+        "litellm_params": {"model": "openai/probe", "litellm_credential_name": "stored"},
+        "model_info": {"id": "probe-id", "team_id": "owner", "supported_endpoints": ["/v1/chat/completions"]},
+    }
+    with _test_connection_probe(deployment) as ahealth_check:
+        await health_test_model_connection(
+            request=MagicMock(),
+            mode="anthropic_messages",
+            litellm_params={},
+            model_info={"id": "probe-id", "team_id": "forged", "supported_endpoints": [endpoint]},
+            user_api_key_dict=UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN),
+        )
+    params: Final = ahealth_check.call_args.kwargs["model_params"]
+    assert params["model_info"]["team_id"] == deployment["model_info"]["team_id"]
+    assert params["model_info"]["supported_endpoints"] == [endpoint]
+    assert params["litellm_credential_name"] == deployment["litellm_params"]["litellm_credential_name"]
+
+
+@pytest.mark.asyncio
+async def test_messages_connection_missing_member_does_not_probe_same_name():
+    with _test_connection_probe(MANTLE_CLAUDE_DEPLOYMENT) as ahealth_check:
+        with pytest.raises(HTTPException) as failure:
+            await health_test_model_connection(
+                request=MagicMock(),
+                mode="anthropic_messages",
+                litellm_params={"model": "claude-haiku-4-5"},
+                model_info={"id": "missing"},
+                user_api_key_dict=UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN),
+            )
+        assert failure.value.status_code == 404
+        ahealth_check.assert_not_awaited()

@@ -707,6 +707,7 @@ from litellm.proxy.management_endpoints.model_management_endpoints import (  # n
 from litellm.proxy.management_endpoints.model_management_endpoints import (
     router as model_management_router,
 )
+from litellm.proxy.management_endpoints.native_model_discovery import router as native_discovery_router
 from litellm.proxy.management_endpoints.organization_endpoints import (
     router as organization_router,
 )
@@ -20717,6 +20718,7 @@ app.include_router(lens_router)
 app.include_router(plugin_router)
 app.include_router(cost_tracking_settings_router)
 app.include_router(prompt_caching_requests_router)
+app.include_router(native_discovery_router)
 app.include_router(router_settings_router)
 app.include_router(fallback_management_router)
 app.include_router(cache_settings_router)

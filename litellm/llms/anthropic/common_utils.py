@@ -460,15 +460,34 @@ def _fetch_anthropic_models_page(
     # after_id rides the URL because the client mutates the params mapping it is handed,
     # which a read-only one cannot support
     query: Final = f"?after_id={quote(after_id)}" if after_id else ""
-    response: Final = litellm.module_level_client.get(
+    initial_response: Final = litellm.module_level_client.get(
         url=f"{api_base}/v1/models{query}",
         headers=headers,
         follow_redirects=False,
     )
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError:
-        raise Exception(f"Failed to fetch models from Anthropic. {_sanitized_anthropic_error(response)}") from None
+    use_bearer: Final = (
+        initial_response.status_code in (401, 403)
+        and httpx.URL(api_base).host != "api.anthropic.com"
+        and "x-api-key" in headers
+    )
+    response: Final = (
+        litellm.module_level_client.get(
+            url=f"{api_base}/v1/models{query}",
+            headers={
+                **{key: value for key, value in headers.items() if key != "x-api-key"},
+                **(
+                    AnthropicModelInfo.get_auth_header(
+                        api_key=headers["x-api-key"], api_base=api_base, use_bearer_for_custom_base=True
+                    )
+                    or {}
+                ),
+            },
+            follow_redirects=False,
+        )
+        if use_bearer
+        else initial_response
+    )
+    response.raise_for_status()
     try:
         return _AnthropicModelsPage.model_validate(response.json())
     except ValueError as e:
