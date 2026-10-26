@@ -30,6 +30,9 @@ jobs:
     name: py${{ matrix.python-version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +83,23 @@ jobs:
         run: $IN_NETNS .venv/bin/python -m pytest tests/unit/router_strategy/test_complexity_router.py -k TestCustomDimensions -q
 
       - name: UUID compatibility
+        if: matrix.python-version != '3.15'
         run: $IN_NETNS .venv/bin/python -m pytest tests/unit/test_uuid_helper.py -q
+
+      - name: UUID compatibility with Python 3.15 coverage
+        if: matrix.python-version == '3.15'
+        run: $IN_NETNS .venv/bin/python -m pytest tests/unit/test_uuid_helper.py -q --cov=./litellm --cov-report=xml:coverage.xml --cov-config=pyproject.toml
+
+      - name: Upload Python 3.15 coverage
+        if: matrix.python-version == '3.15'
+        continue-on-error: true
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          use_oidc: true
+          files: coverage.xml
+          root_dir: ${{ github.workspace }}
+          flags: unit
+          fail_ci_if_error: false
 
       - name: Proxy startup check
         run: $IN_NETNS .venv/bin/python .github/scripts/run_merge_smoke.py proxy-startup --diagnostics-dir "${RUNNER_TEMP}/smoke-diagnostics"
