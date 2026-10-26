@@ -98,7 +98,7 @@ jobs:
           use_oidc: true
           files: coverage.xml
           root_dir: ${{ github.workspace }}
-          flags: unit
+          flags: python-315-uuid-smoke
           fail_ci_if_error: false
 
       - name: Proxy startup check
