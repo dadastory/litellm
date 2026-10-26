@@ -79,6 +79,9 @@ jobs:
       - name: Custom routing pattern compatibility
         run: $IN_NETNS .venv/bin/python -m pytest tests/unit/router_strategy/test_complexity_router.py -k TestCustomDimensions -q
 
+      - name: UUID compatibility
+        run: $IN_NETNS .venv/bin/python -m pytest tests/unit/test_uuid_helper.py -q
+
       - name: Proxy startup check
         run: $IN_NETNS .venv/bin/python .github/scripts/run_merge_smoke.py proxy-startup --diagnostics-dir "${RUNNER_TEMP}/smoke-diagnostics"
 

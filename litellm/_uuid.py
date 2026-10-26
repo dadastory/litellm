@@ -1,10 +1,15 @@
 """
 Internal unified UUID helper.
 
-Always uses fastuuid for performance.
+Uses fastuuid where supported and the standard library on Python 3.15+.
 """
 
-import fastuuid as _uuid
+import sys
+
+if sys.version_info >= (3, 15):
+    import uuid as _uuid
+else:
+    import fastuuid as _uuid
 
 # Expose a module-like alias so callers can use: uuid.uuid4()
 uuid = _uuid
