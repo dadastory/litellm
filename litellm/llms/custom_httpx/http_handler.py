@@ -42,7 +42,8 @@ from litellm.litellm_core_utils.logging_utils import track_llm_api_timing
 from litellm.litellm_core_utils.request_timeout_resolver import (
     get_configured_request_timeout,
 )
-from litellm.types.llms.custom_http import *
+from litellm.llms.custom_httpx.outbound_proxy import OutboundProxy, current_outbound_proxy
+from litellm.types.llms.custom_http import VerifyTypes, httpxSpecialProvider
 
 if TYPE_CHECKING:
     from litellm import LlmProviders
@@ -67,6 +68,7 @@ except Exception:
 _AIOHTTP_SUPPORTS_SOCKET_FACTORY: Final = "socket_factory" in inspect.signature(TCPConnector.__init__).parameters
 
 _AddrInfo: TypeAlias = tuple[int | socket.AddressFamily, int | socket.SocketKind, int, str, tuple[object, ...]]
+
 
 _RequestContent: TypeAlias = str | bytes | Iterable[bytes] | AsyncIterable[bytes]
 
@@ -631,7 +633,9 @@ class AsyncHTTPHandler:
         shared_session: Optional["ClientSession"] = None,
         transport: httpx.AsyncBaseTransport | None = None,
         follow_redirects: bool = True,
+        outbound_proxy: OutboundProxy | None = None,
     ):
+        self.outbound_proxy = outbound_proxy or current_outbound_proxy.get()
         self.timeout = timeout
         self.event_hooks = event_hooks
         self.ssl_verify = ssl_verify
@@ -649,6 +653,8 @@ class AsyncHTTPHandler:
 
     @property
     def client(self) -> httpx.AsyncClient:
+        if self.outbound_proxy is None and current_outbound_proxy.get() is not None:
+            return get_async_httpx_client("outbound_proxy", params={"timeout": self.timeout}).client
         if self._owns_client and self._client.is_closed:
             self._client = self.create_client(
                 timeout=self.timeout,
@@ -670,6 +676,20 @@ class AsyncHTTPHandler:
         ssl_verify: VerifyTypes | None = None,
         shared_session: Optional["ClientSession"] = None,
     ) -> httpx.AsyncClient:
+        if self.outbound_proxy is not None:
+            policy_ssl: Final = get_ssl_configuration(self.outbound_proxy.verify)
+            policy_proxy: Final = self.outbound_proxy.httpx_proxy(policy_ssl)
+            return httpx.AsyncClient(
+                proxy=policy_proxy,
+                verify=policy_ssl,
+                trust_env=False,
+                timeout=timeout if timeout is not None else _DEFAULT_TIMEOUT,
+                event_hooks=event_hooks,
+                headers=get_default_headers(),
+                cookies=blocked_cookie_jar(),
+                follow_redirects=self.follow_redirects,
+                http2=http2_enabled(),
+            )
         if self.transport is not None:
             return httpx.AsyncClient(
                 transport=self.transport,
@@ -1406,7 +1426,9 @@ class HTTPHandler:
         disable_default_headers: bool
         | None = False,  # arize phoenix returns different API responses when user agent header in request
         follow_redirects: bool = True,
+        outbound_proxy: OutboundProxy | None = None,
     ):
+        self.outbound_proxy = outbound_proxy or current_outbound_proxy.get()
         self.timeout = timeout
         self.ssl_verify = ssl_verify
         self.disable_default_headers = disable_default_headers
@@ -1416,6 +1438,19 @@ class HTTPHandler:
         self._client = self.create_client() if client is None else client
 
     def create_client(self) -> httpx.Client:
+        if self.outbound_proxy is not None:
+            policy_ssl: Final = get_ssl_configuration(self.outbound_proxy.verify)
+            policy_proxy: Final = self.outbound_proxy.httpx_proxy(policy_ssl)
+            return httpx.Client(
+                proxy=policy_proxy,
+                verify=policy_ssl,
+                trust_env=False,
+                timeout=self.timeout if self.timeout is not None else _DEFAULT_TIMEOUT,
+                headers=get_default_headers() if not self.disable_default_headers else None,
+                cookies=blocked_cookie_jar(),
+                follow_redirects=self.follow_redirects,
+                http2=http2_enabled(),
+            )
         # Get unified SSL configuration
         ssl_config: Final = get_ssl_configuration(self.ssl_verify)
 
@@ -1441,6 +1476,8 @@ class HTTPHandler:
 
     @property
     def client(self) -> httpx.Client:
+        if self.outbound_proxy is None and current_outbound_proxy.get() is not None:
+            return get_httpx_client(params={"timeout": self.timeout}).client
         if self._owns_client and self._client.is_closed:
             with self._heal_lock:
                 if self._owns_client and self._client.is_closed:
@@ -1746,9 +1783,14 @@ def get_async_httpx_client(
 
     Caches the new client and returns it.
     """
+    effective_params: Final = (
+        {**(params or {}), "outbound_proxy": current_outbound_proxy.get()}
+        if current_outbound_proxy.get() is not None
+        else params
+    )
     _params_key_name = ""
-    if params is not None:
-        for key, value in params.items():
+    if effective_params is not None:
+        for key, value in effective_params.items():
             try:
                 _params_key_name += f"{key}_{value}"
             except Exception:
@@ -1769,9 +1811,9 @@ def get_async_httpx_client(
     if _cached_client:
         return _cached_client
 
-    if params is not None:
-        # Filter out params that are only used for cache key, not for AsyncHTTPHandler.__init__
-        handler_params: Final = {k: v for k, v in params.items() if k != "disable_aiohttp_transport"}
+    if effective_params is not None:
+        # Filter out effective_params that are only used for cache key, not for AsyncHTTPHandler.__init__
+        handler_params: Final = {k: v for k, v in effective_params.items() if k != "disable_aiohttp_transport"}
         handler_params["shared_session"] = shared_session
         _new_client = AsyncHTTPHandler(**handler_params)
     else:
@@ -1796,9 +1838,14 @@ def get_httpx_client(params: dict | None = None) -> HTTPHandler:
 
     Caches the new client and returns it.
     """
+    effective_params: Final = (
+        {**(params or {}), "outbound_proxy": current_outbound_proxy.get()}
+        if current_outbound_proxy.get() is not None
+        else params
+    )
     _params_key_name = ""
-    if params is not None:
-        for key, value in params.items():
+    if effective_params is not None:
+        for key, value in effective_params.items():
             try:
                 _params_key_name += f"{key}_{value}"
             except Exception:
@@ -1819,9 +1866,9 @@ def get_httpx_client(params: dict | None = None) -> HTTPHandler:
     if _cached_client:
         return _cached_client
 
-    if params is not None:
-        # Filter out params that are only used for cache key, not for HTTPHandler.__init__
-        handler_params: Final = {k: v for k, v in params.items() if k != "disable_aiohttp_transport"}
+    if effective_params is not None:
+        # Filter out effective_params that are only used for cache key, not for HTTPHandler.__init__
+        handler_params: Final = {k: v for k, v in effective_params.items() if k != "disable_aiohttp_transport"}
         _new_client = HTTPHandler(**handler_params)
     else:
         _new_client = HTTPHandler(timeout=_default_cached_client_timeout())

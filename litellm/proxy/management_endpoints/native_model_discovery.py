@@ -29,7 +29,10 @@ def _discover(deployment: Deployment) -> dict[str, list[dict[str, str]]]:
     # provider calls are never inserted as successful empty results.
     cached: Final = _model_cache.get_cached_model_info(provider, params)
     if cached is None:
-        discovered: Final = config.discover_models(params.model_dump(exclude_none=True))
+        from litellm.llms.custom_httpx.outbound_proxy import outbound_proxy_scope, resolve_outbound_proxy
+
+        with outbound_proxy_scope(resolve_outbound_proxy(params.model_dump(exclude_none=True))):
+            discovered: Final = config.discover_models(params.model_dump(exclude_none=True))
         _model_cache.set_cached_model_info(provider, params, discovered)
     return {"data": [{"id": model} for model in get_known_models_from_wildcard(deployment.model_name, params)]}
 

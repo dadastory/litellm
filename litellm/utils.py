@@ -716,8 +716,10 @@ def load_credentials_from_list(kwargs: dict):
             len(litellm.credential_list),
         )
         return
+    from litellm.llms.custom_httpx.outbound_proxy import PROXY_FIELDS
+
     for key, value in credential.credential_values.items():
-        if key not in kwargs:
+        if key not in kwargs and key not in PROXY_FIELDS:
             kwargs[key] = value
 
 
@@ -1685,8 +1687,11 @@ def _is_litellm_router_call(kwargs: Mapping[str, object], *, is_async: bool) -> 
     return any(isinstance(bucket, Mapping) and "model_group" in bucket for bucket in metadata_buckets)
 
 
-def client(original_function):
+def client(function):
     from litellm.litellm_core_utils.core_helpers import max_retries_per_request_hit
+    from litellm.llms.custom_httpx.outbound_proxy import with_outbound_proxy
+
+    original_function: Final = with_outbound_proxy(function)
 
     Rules: Final = litellm_utils.Rules
     rules_obj: Final = Rules()
@@ -2314,11 +2319,10 @@ def client(original_function):
     get_coroutine_checker: Final = litellm_utils.get_coroutine_checker
     is_coroutine: Final = get_coroutine_checker().is_async_callable(original_function)
 
-    # Return the appropriate wrapper based on the original function type
     if is_coroutine:
-        return wrapper_async
+        return with_outbound_proxy(wrapper_async, prepare=True)
     else:
-        return wrapper
+        return with_outbound_proxy(wrapper, prepare=True)
 
 
 def _is_async_request(
@@ -3284,6 +3288,8 @@ def _get_builtin_model_info_for_registration(model: str, custom_llm_provider: st
 
 
 _runtime_registered_model_cost: Final[dict[str, dict[str, object]]] = {}  # mutable-ok: replayed on reload
+
+
 class _RegisteredPricingFields:
     """Explicitly registered rates per cost-map key, tied to the ``litellm.model_cost`` object they were
     registered on so a replaced catalog starts without them, as the entries they describe do."""

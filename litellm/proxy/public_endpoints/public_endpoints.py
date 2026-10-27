@@ -416,7 +416,20 @@ async def get_provider_fields() -> list[ProviderCreateInfo]:
     with open(provider_create_fields_path, "r") as f:
         provider_create_fields: Final = _PROVIDER_CREATE_FIELDS_ADAPTER.validate_python(json.load(f))
 
-    return provider_create_fields
+    from litellm.llms.custom_httpx.outbound_proxy import PROXY_CREDENTIAL_FIELDS
+
+    return _PROVIDER_CREATE_FIELDS_ADAPTER.validate_python(
+        [
+            {
+                **provider.model_dump(),
+                "credential_fields": [
+                    *(field.model_dump() for field in provider.credential_fields),
+                    *PROXY_CREDENTIAL_FIELDS,
+                ],
+            }
+            for provider in provider_create_fields
+        ]
+    )
 
 
 @router.get(

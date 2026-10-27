@@ -34,6 +34,7 @@ from litellm.llms.custom_httpx.http_handler import (
     get_ssl_configuration,
     http2_enabled,
 )
+from litellm.llms.custom_httpx.outbound_proxy import current_outbound_proxy
 
 
 def _get_client_init_params(cls: type) -> tuple[str, ...]:
@@ -231,6 +232,8 @@ class BaseOpenAILLM:
         closed on eviction; the caller goes on using the session. ``None`` means the
         SDK built its own http client, which litellm does own.
         """
+        if current_outbound_proxy.get() is not None:
+            return False
         if http_client is None:
             return True
         return http_client is not litellm.aclient_session and http_client is not litellm.client_session
@@ -261,6 +264,7 @@ class BaseOpenAILLM:
     @staticmethod
     def get_openai_client_cache_key(client_initialization_params: dict, client_type: Literal["openai", "azure"]) -> str:
         """Creates a cache key for the OpenAI client based on the client initialization parameters"""
+        outbound_proxy: Final = current_outbound_proxy.get()
         hashed_api_key = None
         if client_initialization_params.get("api_key") is not None:
             hash_object: Final = hashlib.sha256(client_initialization_params.get("api_key", "").encode())
@@ -269,6 +273,7 @@ class BaseOpenAILLM:
 
         # Create a more readable cache key using a list of key-value pairs
         key_parts: Final = [
+            f"outbound_proxy={outbound_proxy.identity if outbound_proxy is not None else 'default'}",
             f"hashed_api_key={hashed_api_key}",
             f"is_async={client_initialization_params.get('is_async')}",
         ]
@@ -305,6 +310,10 @@ class BaseOpenAILLM:
     def _get_async_http_client(
         shared_session: Optional["ClientSession"] = None,
     ) -> httpx.AsyncClient | None:
+        if current_outbound_proxy.get() is not None:
+            from litellm.llms.custom_httpx.http_handler import get_async_httpx_client
+
+            return get_async_httpx_client("openai").client
         if litellm.aclient_session is not None:
             return litellm.aclient_session
 
@@ -338,6 +347,10 @@ class BaseOpenAILLM:
 
     @staticmethod
     def _get_sync_http_client() -> httpx.Client | None:
+        if current_outbound_proxy.get() is not None:
+            from litellm.llms.custom_httpx.http_handler import get_httpx_client
+
+            return get_httpx_client().client
         if litellm.client_session is not None:
             return litellm.client_session
 

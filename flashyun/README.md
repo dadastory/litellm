@@ -7,6 +7,9 @@ or independent provider implementation is introduced
 
 Maintained differences:
 
+- Supplier-scoped HTTP/HTTPS proxy credentials and certificate policy, using native HTTPX transports and credential encryption; request context and native client-cache identity isolate concurrent routes. Native credential creation can inherit transport fields server-side for an additional supplier key.
+- Preserve native GenericResponseOutputItem text in the Chat Completions to Responses to Messages bridge.
+
 - Preserve custom OpenAI model-discovery base paths and HTTP status failures.
 - For custom Anthropic discovery, retry the same URL once with the native Bearer
   helper after standard authentication returns 401/403. Official Anthropic keeps
@@ -31,6 +34,7 @@ The parent project executes these regressions during its host Docker Compose bui
 LITELLM_LOCAL_MODEL_COST_MAP=True python flashyun/verify_discovery.py
 LITELLM_LOCAL_MODEL_COST_MAP=True python flashyun/verify_messages_health.py
 LITELLM_LOCAL_MODEL_COST_MAP=True python flashyun/verify_health_endpoint.py
+LITELLM_LOCAL_MODEL_COST_MAP=True python flashyun/verify_outbound_proxy.py
 ```
 
 They use synthetic credentials and in-process HTTP transports or loopback only.

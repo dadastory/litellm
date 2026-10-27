@@ -45,6 +45,7 @@ from litellm.types.llms.anthropic_messages.anthropic_response import (
     AnthropicUsage,
 )
 from litellm.types.llms.openai import (
+    GenericResponseOutputItem,
     ResponseAPIUsage,
     ResponsesAPIResponse,
 )
@@ -654,7 +655,12 @@ class LiteLLMAnthropicToResponsesAPIAdapter:
             cast(Iterable[object], response.output)  # cast-ok: output items re-validated per item
         )
 
-        for item in response.output:
+        for output_item in response.output:
+            item = (
+                output_item.model_dump(exclude_none=True)
+                if isinstance(output_item, GenericResponseOutputItem)
+                else output_item
+            )
             if isinstance(item, ResponseReasoningItem):
                 reasoning_block = self._thinking_block_from_reasoning_item(item.summary, item.encrypted_content)
                 if reasoning_block is not None:

@@ -26,6 +26,7 @@ from litellm.litellm_core_utils.model_response_utils import (
 )
 from litellm.litellm_core_utils.redact_messages import LiteLLMLoggingObject
 from litellm.litellm_core_utils.thread_pool_executor import executor
+from litellm.llms.custom_httpx.outbound_proxy import current_outbound_proxy, outbound_proxy_scope
 from litellm.types.llms.base import LiteLLMBaseModel
 from litellm.types.llms.openai import OpenAIChatCompletionChunk
 from litellm.types.router import GenericLiteLLMParams
@@ -227,6 +228,7 @@ class CustomStreamWrapper:
         count_prompt_tokens: Callable[[], int] | None = None,
     ):
         self.model = model
+        self._outbound_proxy = current_outbound_proxy.get()
         self.make_call = make_call
         self.count_prompt_tokens = count_prompt_tokens
         self.custom_llm_provider = custom_llm_provider
@@ -1991,7 +1993,8 @@ class CustomStreamWrapper:
     def fetch_sync_stream(self):
         if self.completion_stream is None and self.make_call is not None:
             # Call make_call to get the completion stream
-            self.completion_stream = self.make_call(client=litellm.module_level_client)
+            with outbound_proxy_scope(self._outbound_proxy):
+                self.completion_stream = self.make_call(client=litellm.module_level_client)
             self._stream_iter = self.completion_stream.__iter__()
 
         return self.completion_stream
@@ -1999,7 +2002,8 @@ class CustomStreamWrapper:
     async def fetch_stream(self):
         if self.completion_stream is None and self.make_call is not None:
             # Call make_call to get the completion stream
-            self.completion_stream = await self.make_call(client=litellm.module_level_aclient)
+            with outbound_proxy_scope(self._outbound_proxy):
+                self.completion_stream = await self.make_call(client=litellm.module_level_aclient)
             self._stream_iter = self.completion_stream.__aiter__()
 
         return self.completion_stream

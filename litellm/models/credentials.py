@@ -38,6 +38,7 @@ class CredentialView(CredentialBase):
 
 
 class CreateCredentialItem(CredentialBase):
+    transport_source: str | None = None
     credential_values: dict | None = None
     model_id: str | None = None
 

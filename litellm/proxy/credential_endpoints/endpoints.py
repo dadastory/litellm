@@ -23,6 +23,7 @@ from litellm.llms.anthropic.wif import (
     UnbuildableIdentitySource,
     anthropic_internal_issuer_jwks,
 )
+from litellm.llms.custom_httpx.outbound_proxy import PROXY_FIELDS, parse_outbound_proxy
 from litellm.models.credentials import CredentialView, UpdateCredentialItem
 from litellm.proxy._types import (
     CommonProxyErrors,
@@ -39,7 +40,7 @@ from litellm.proxy.common_utils.credential_hydration import (
 )
 from litellm.proxy.common_utils.encrypt_decrypt_utils import encrypt_value_helper
 from litellm.proxy.db.routing_prisma_wrapper import WriterPinnedClient
-from litellm.proxy.utils import handle_exception_on_proxy, jsonify_object
+from litellm.proxy.utils import PrismaClient, handle_exception_on_proxy, jsonify_object
 from litellm.repositories.base_repository import is_unique_violation
 from litellm.repositories.credentials_repository import CredentialsRepository
 from litellm.types.router import server_owned_wif_fields_named
@@ -49,6 +50,33 @@ router: Final = APIRouter()
 _CREDENTIAL_DICT_ADAPTER: Final = TypeAdapter(dict[str, object])
 _DISPLAY_NAME_MAX_LENGTH: Final = 255
 _DISPLAY_NAME_FORBIDDEN_CATEGORIES: Final = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+
+
+def _validate_transport(values: Mapping[str, object]) -> None:
+    try:
+        parse_outbound_proxy(values)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+async def _transport_credential_values(
+    credential: CreateCredentialItem,
+    values: Mapping[str, object],
+    prisma_client: PrismaClient | None,
+    user_api_key_dict: UserAPIKeyAuth,
+) -> dict[str, object]:
+    if credential.transport_source is None:
+        _validate_transport(values)
+        return dict(values)
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+        raise HTTPException(status_code=403, detail="Proxy administrator required")
+    source: Final = await hydrate_named_credential_authoritative(credential.transport_source, prisma_client)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Transport source not found")
+    inherited: Final = {key: value for key, value in source.credential_values.items() if key in PROXY_FIELDS}
+    merged: Final = {**inherited, **values}
+    _validate_transport(merged)
+    return merged
 
 
 def _reject_non_admin_wif_fields(
@@ -289,7 +317,12 @@ async def create_credential(
         processed_credential: Final = CredentialItem(
             credential_name=credential.credential_name,
             display_name=_normalized_display_name(credential.display_name),
-            credential_values=_without_null_values(_CREDENTIAL_DICT_ADAPTER.validate_python(credential_values)),
+            credential_values=await _transport_credential_values(
+                credential,
+                _without_null_values(_CREDENTIAL_DICT_ADAPTER.validate_python(credential_values)),
+                prisma_client,
+                user_api_key_dict,
+            ),
             credential_info=credential.credential_info,
         )
         encrypted_credential: Final = CredentialHelperUtils.encrypt_credential_values(processed_credential)
@@ -593,6 +626,21 @@ async def update_credential(
         if db_credential is None:
             raise _not_found_unless_config_defined(credential_name, "Credential not found in DB.")
         _reject_non_admin_wif_fields(_stored_wif_fields(db_credential), user_api_key_dict)
+        if PROXY_FIELDS.intersection(incoming_values) or PROXY_FIELDS.intersection(
+            credential.credential_values_to_delete or ()
+        ):
+            saved = await hydrate_named_credential_authoritative(credential_name, prisma_client)
+            effective = {
+                **(saved.credential_values if saved is not None else {}),
+                **_without_null_values(incoming_values),
+            }
+            _validate_transport(
+                {
+                    key: value
+                    for key, value in effective.items()
+                    if key not in (credential.credential_values_to_delete or ())
+                }
+            )
         patch: Final = CredentialItem(
             credential_name=credential_name,
             display_name=(

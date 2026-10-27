@@ -49,6 +49,7 @@ from litellm.litellm_core_utils.url_utils import (
     provider_url_destination_candidates,
 )
 from litellm.llms.anthropic.common_utils import ANTHROPIC_OAUTH_FORWARD_PROVIDERS
+from litellm.llms.custom_httpx.outbound_proxy import PROXY_FIELDS
 from litellm.proxy._types import (
     AddTeamCallback,
     CommonProxyErrors,
@@ -82,7 +83,8 @@ _REDACTED_HEADER_VALUE: Final = "***REDACTED***"
 _CREDENTIAL_HEADER_NAMES: Final = SpecialHeaders.litellm_credential_header_names() | frozenset(
     {"cookie", "proxy-authorization"}
 )
-_TRANSPORT_ONLY_CREDENTIAL_KEYS: Final = frozenset({"provider_specific_header", "headers", "api_key"})
+
+_TRANSPORT_ONLY_CREDENTIAL_KEYS: Final = frozenset({"provider_specific_header", "headers", "api_key"}) | PROXY_FIELDS
 
 # Matches any header of the form x-<something>-session-id (case-insensitive).
 # Excludes the two explicit litellm headers which are handled with higher priority.
