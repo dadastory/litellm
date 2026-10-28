@@ -1,12 +1,13 @@
 # FlashYun native gateway fork
 
-Based on BerriAI/litellm **v1.106.4**, synced before creating branch
+Based on BerriAI/litellm **v1.106.5**, synced before creating branch
 `flashyun-native-gateway`. Upstream owns provider transport, protocol conversion,
 credentials, routing, persistence, retries and accounting. No FlashYun callback
 or independent provider implementation is introduced
 
 Maintained differences:
 
+- Compose shared extra-parameter drops with deployment and request additions without changing scalar precedence or persisted lists
 - Supplier-scoped HTTP/HTTPS proxy credentials and certificate policy, using native HTTPX transports and credential encryption; request context and native client-cache identity isolate concurrent routes. Native credential creation can inherit transport fields server-side for an additional supplier key.
 - Preserve native GenericResponseOutputItem text in the Chat Completions to Responses to Messages bridge.
 
@@ -22,7 +23,7 @@ Maintained differences:
   inherit a different credential's conversation route. A missing explicit member
   ID cannot fall back to a same-name deployment.
 
-Upstream v1.106.4 already supplies `anthropic_messages` health checks; there is no
+Upstream v1.106.5 already supplies `anthropic_messages` health checks; there is no
 custom health mode or protocol converter. FlashYun builds the complete Python
 package from this checkout over the matching official runtime, retaining its
 frozen dependencies and compiled Rust extension. No string-replacement patch

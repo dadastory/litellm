@@ -140,6 +140,35 @@ def test_update_kwargs_does_not_mutate_defaults_and_merges_metadata():
     assert kwargs["litellm_metadata"] == {"baz": 123}
 
 
+@pytest.mark.parametrize("request_drops", [[], ["tools[*].input_examples", "user"]])
+def test_shared_parameter_drops_preserve_deployment_and_request_filters(request_drops: list[str]) -> None:
+    router: Final = Router(default_litellm_params={"additional_drop_params": ["user", "metadata.user_id"]})
+    deployment: Final = {
+        "model_name": "filter-fixture",
+        "model_info": {"id": "filter-deployment"},
+        "litellm_params": {"model": "openai/filter-fixture", "additional_drop_params": ["temperature", "user"]},
+    }
+    original: Final = copy.deepcopy(deployment)
+    defaults: Final = copy.deepcopy(router.default_litellm_params)
+    kwargs: Final = {
+        "model": "filter-fixture",
+        "additional_drop_params": request_drops,
+        "metadata": {"request_marker": "retained"},
+        "max_tokens": 37,
+    }
+    router._update_kwargs_with_deployment(deployment=deployment, kwargs=kwargs)
+    expected: Final = ["user", "metadata.user_id", "temperature"] + (
+        ["tools[*].input_examples"] if request_drops else []
+    )
+    assert kwargs["additional_drop_params"] == expected
+    assert kwargs["max_tokens"] == 37
+    assert kwargs["metadata"]["request_marker"] == "retained"
+    assert deployment == original
+    assert router.default_litellm_params == defaults
+    assert request_drops == ([] if not request_drops else ["tools[*].input_examples", "user"])
+    router.reset()
+
+
 def test_router_with_model_info_and_model_group():
     """
     Test edge case where user specifies model_group in model_info

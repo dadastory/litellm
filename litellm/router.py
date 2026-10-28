@@ -505,6 +505,7 @@ _NO_SESSION_KWARGS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType
 _SESSION_ADAPTER: Final = TypeAdapter(Mapping[str, object])
 _MODEL_INFO_ADAPTER: Final = TypeAdapter(Mapping[str, object])
 _LITELLM_PARAMS_ADAPTER: Final = TypeAdapter(Mapping[str, object])
+_DROP_PARAMS_ADAPTER: Final = TypeAdapter(tuple[str, ...])
 _SILENT_MODEL_ADAPTER: Final = TypeAdapter(str | list[str])
 _RESOLVED_RETRY_POLICY_ADAPTER: Final = TypeAdapter(RetryPolicy | None)
 _ROUTING_KWARGS_ADAPTER: Final[TypeAdapter[Mapping[str, object] | None]] = TypeAdapter(Mapping[str, object] | None)
@@ -4292,6 +4293,17 @@ class Router:
         else:
             kwargs["timeout"] = self._get_timeout(kwargs=kwargs, data=deployment["litellm_params"])
 
+        shared_drops: Final = _DROP_PARAMS_ADAPTER.validate_python(
+            self.default_litellm_params.get("additional_drop_params") or ()
+        )
+        if shared_drops:
+            deployment_drops: Final = _DROP_PARAMS_ADAPTER.validate_python(
+                deployment["litellm_params"].get("additional_drop_params") or ()
+            )
+            request_drops: Final = _DROP_PARAMS_ADAPTER.validate_python(kwargs.get("additional_drop_params") or ())
+            kwargs["additional_drop_params"] = list(  # rebind-ok: Existing Router hook updates per-attempt kwargs in place
+                dict.fromkeys(shared_drops + deployment_drops + request_drops)
+            )
         self._update_kwargs_with_default_litellm_params(kwargs=kwargs, metadata_variable_name=metadata_variable_name)
         hop_kwargs: Final = _FALLBACK_HOP_ADAPTER.validate_python(kwargs)
         if _is_fallback_hop(hop_kwargs):
