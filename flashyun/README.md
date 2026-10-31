@@ -7,6 +7,7 @@ or independent provider implementation is introduced
 
 Maintained differences:
 
+- Reuse native overlap-aware URL composition for Anthropic Messages and Chat execution, preserving proxy prefixes, versioned bases, complete endpoints, query parameters and the explicit Chat suffix-disable setting
 - Inherit public catalog metadata by the same terminal model ID across transport providers, without an alias table; keep cross-provider registrations and custom zero prices on the requested channel key without changing the reference provider
 - Treat missing token observations consistently with native usage fallbacks and schema defaults, preserving queued spend rows, observed zero counts and calculated fees without broadening poison-row rejection
 - Compose shared extra-parameter drops with deployment and request additions without changing scalar precedence or persisted lists

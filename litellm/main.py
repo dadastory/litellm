@@ -48,6 +48,7 @@ from litellm.types.llms.base import LiteLLMBaseModel
 
 # Other utils are imported directly to avoid circular imports
 from litellm.utils import (
+    add_path_to_api_base,
     exception_type,
     filter_out_litellm_params,
     get_litellm_params,
@@ -2940,8 +2941,8 @@ def _complete_anthropic(ctx: CompletionDispatchContext) -> _CompletionDispatchRe
 
     # Check if we should disable automatic URL suffix appending
     disable_url_suffix: Final = get_secret_bool("LITELLM_ANTHROPIC_DISABLE_URL_SUFFIX")
-    if api_base is not None and not disable_url_suffix and not api_base.endswith("/v1/messages"):
-        api_base += "/v1/messages"
+    if api_base is not None and not disable_url_suffix:
+        api_base = add_path_to_api_base(api_base=api_base, ending_path="/v1/messages")
     elif disable_url_suffix:
         verbose_logger.debug("LITELLM_ANTHROPIC_DISABLE_URL_SUFFIX is set, skipping /v1/messages suffix")
 

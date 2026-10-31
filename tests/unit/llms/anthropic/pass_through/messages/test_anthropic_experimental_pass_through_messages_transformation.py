@@ -24,6 +24,28 @@ _WIF_PARAMS: Final[dict] = {
 }
 
 
+@pytest.mark.parametrize(
+    "base, expected",
+    (
+        ("https://relay.example", "https://relay.example/v1/messages"),
+        ("https://relay.example/", "https://relay.example/v1/messages"),
+        ("https://relay.example/proxy/v1", "https://relay.example/proxy/v1/messages"),
+        ("https://relay.example/proxy/v1/", "https://relay.example/proxy/v1/messages"),
+        ("https://relay.example/proxy/v1/messages", "https://relay.example/proxy/v1/messages"),
+        ("https://relay.example/proxy/v1/messages/", "https://relay.example/proxy/v1/messages"),
+        ("https://relay.example/proxy/v1?tenant=demo", "https://relay.example/proxy/v1/messages?tenant=demo"),
+        ("https://relay.example/proxy/v1/messages?tenant=demo", "https://relay.example/proxy/v1/messages?tenant=demo"),
+    ),
+)
+def test_messages_url_preserves_prefix_and_query_without_duplicate_segments(base: str, expected: str) -> None:
+    assert (
+        AnthropicMessagesConfig().get_complete_url(
+            api_base=base, api_key=None, model="route-probe", optional_params={}, litellm_params={}
+        )
+        == expected
+    )
+
+
 def test_workload_identity_allowed_for_anthropic() -> None:
     assert AnthropicMessagesConfig()._allows_workload_identity is True
 

@@ -6,6 +6,8 @@ import logging
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import litellm
 
@@ -27,7 +29,8 @@ class MessagesHealthTest(unittest.TestCase):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 requests.append((self.path, body["model"]))
-                if self.path == "/relay/v1/chat/completions":
+                route = urlsplit(self.path).path
+                if route == "/relay/v1/chat/completions":
                     status, result = (
                         200,
                         {
@@ -41,7 +44,7 @@ class MessagesHealthTest(unittest.TestCase):
                             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
                         },
                     )
-                elif self.path == "/relay/v1/responses" and self.responses_supported:
+                elif route == "/relay/v1/responses" and self.responses_supported:
                     status, result = (
                         200,
                         {
@@ -64,7 +67,7 @@ class MessagesHealthTest(unittest.TestCase):
                             "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
                         },
                     )
-                elif self.path == "/relay/v1/messages":
+                elif route in ("/relay/v1/messages", "/relay/custom"):
                     status, result = (
                         200,
                         {
@@ -107,6 +110,20 @@ class MessagesHealthTest(unittest.TestCase):
                     True,
                 ),
                 ("anthropic", "anthropic", "", {}, "/relay/v1/messages", True),
+                ("anthropic-slash", "anthropic", "/", {}, "/relay/v1/messages", True),
+                ("anthropic-v1", "anthropic", "/v1", {}, "/relay/v1/messages", True),
+                ("anthropic-v1-slash", "anthropic", "/v1/", {}, "/relay/v1/messages", True),
+                ("anthropic-endpoint", "anthropic", "/v1/messages", {}, "/relay/v1/messages", True),
+                ("anthropic-endpoint-slash", "anthropic", "/v1/messages/", {}, "/relay/v1/messages", True),
+                ("anthropic-query", "anthropic", "/v1?tenant=demo", {}, "/relay/v1/messages?tenant=demo", True),
+                (
+                    "anthropic-endpoint-query",
+                    "anthropic",
+                    "/v1/messages?tenant=demo",
+                    {},
+                    "/relay/v1/messages?tenant=demo",
+                    True,
+                ),
                 (
                     "messages-base",
                     "openai",
@@ -157,6 +174,32 @@ class MessagesHealthTest(unittest.TestCase):
                         serving_ok = False
                     self.assertEqual(serving_ok, succeeds)
                     self.assertEqual(requests, [(path, "route-probe")])
+                    if provider == "anthropic":
+                        requests.clear()
+                        await litellm.acompletion(
+                            **params, messages=[{"role": "user", "content": "ping"}], max_tokens=16
+                        )
+                        self.assertEqual(requests, [(path, "route-probe")])
+                        requests.clear()
+                        litellm.completion(**params, messages=[{"role": "user", "content": "ping"}], max_tokens=16)
+                        self.assertEqual(requests, [(path, "route-probe")])
+
+            with patch.dict("os.environ", {"LITELLM_ANTHROPIC_DISABLE_URL_SUFFIX": "true"}):
+                custom_params = {
+                    "model": "anthropic/route-probe",
+                    "api_base": base + "/custom?tenant=demo",
+                    "api_key": "local-probe",
+                    "num_retries": 0,
+                    "timeout": 5,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 16,
+                }
+                requests.clear()
+                await litellm.acompletion(**custom_params)
+                self.assertEqual(requests, [("/relay/custom?tenant=demo", "route-probe")])
+                requests.clear()
+                litellm.completion(**custom_params)
+                self.assertEqual(requests, [("/relay/custom?tenant=demo", "route-probe")])
 
         asyncio.run(run())
 
