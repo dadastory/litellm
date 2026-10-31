@@ -501,3 +501,126 @@ def test_get_model_info_custom_provider():
     get_model_info(
         model="my-custom-llm/my-fake-model"
     )  # 💥 "Exception: This model isn't mapped yet." in v1.56.10
+
+
+def test_compatible_transport_inherits_exact_catalog_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    original: Final = GetModelCostMap.loaded_model_cost_map()
+    reference: Final = "deepseek/deepseek-v4.1-flash"
+    row: Final = {
+        "litellm_provider": "deepseek",
+        "mode": "chat",
+        "max_input_tokens": 131072,
+        "max_output_tokens": 8192,
+        "input_cost_per_token": 0.000002,
+        "output_cost_per_token": 0.000004,
+        "supports_function_calling": True,
+    }
+    monkeypatch.setattr(litellm, "model_cost", {reference: row})
+    GetModelCostMap._snapshot_loaded_catalog({reference: row})
+    litellm.get_model_info.cache_clear()
+    try:
+        info: Final = litellm.get_model_info("openai/DeepSeek-V4.1-Flash")
+        assert {key: info[key] for key in row} == {**row, "litellm_provider": "openai"}
+        assert info["key"] == reference
+    finally:
+        GetModelCostMap._snapshot_loaded_catalog(original)
+        litellm.get_model_info.cache_clear()
+
+
+def test_compatible_transport_uses_same_name_without_an_alias_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    original: Final = GetModelCostMap.loaded_model_cost_map()
+    first: Final = "reseller/deepseek-v4.1-flash"
+    second: Final = "another/deepseek-v4.1-flash"
+    row: Final = {
+        "litellm_provider": "reseller",
+        "mode": "chat",
+        "max_input_tokens": 131072,
+        "input_cost_per_token": 0,
+        "output_cost_per_token": 0.000004,
+        "supports_vision": False,
+    }
+    catalog: Final = {first: row, second: {**row, "litellm_provider": "another", "output_cost_per_token": 0.000005}}
+    monkeypatch.setattr(litellm, "model_cost", dict(catalog))
+    GetModelCostMap._snapshot_loaded_catalog(catalog)
+    litellm.get_model_info.cache_clear()
+    try:
+        info: Final = litellm.get_model_info("openai/deepseek-ai/DeepSeek-V4.1-Flash")
+        assert info["key"] == first
+        assert info["input_cost_per_token"] == 0
+        assert info["output_cost_per_token"] == row["output_cost_per_token"]
+        assert info["max_input_tokens"] == row["max_input_tokens"]
+        assert info["supports_vision"] is False
+        assert info["max_output_tokens"] is None
+    finally:
+        GetModelCostMap._snapshot_loaded_catalog(original)
+        litellm.get_model_info.cache_clear()
+
+
+@pytest.mark.parametrize("suffix", ["-fast", "-fp4", "-1017", "-pro"])
+def test_compatible_transport_does_not_guess_another_variant(monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
+    from litellm.exceptions import ModelNotMappedError
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    original: Final = GetModelCostMap.loaded_model_cost_map()
+    reference: Final = "reseller/fixture-model-v7.3"
+    row: Final = {"litellm_provider": "reseller", "mode": "chat", "input_cost_per_token": 0.000002}
+    monkeypatch.setattr(litellm, "model_cost", {reference: row})
+    GetModelCostMap._snapshot_loaded_catalog({reference: row})
+    litellm.get_model_info.cache_clear()
+    try:
+        with pytest.raises(ModelNotMappedError):
+            litellm.get_model_info(f"openai/fixture-model-v7.3{suffix}")
+    finally:
+        GetModelCostMap._snapshot_loaded_catalog(original)
+        litellm.get_model_info.cache_clear()
+
+
+def test_compatible_transport_does_not_read_runtime_registrations_as_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litellm.exceptions import ModelNotMappedError
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    original: Final = GetModelCostMap.loaded_model_cost_map()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"reseller/fixture-private-v7.3": {"litellm_provider": "reseller", "input_cost_per_token": 0.000002}},
+    )
+    GetModelCostMap._snapshot_loaded_catalog({})
+    litellm.get_model_info.cache_clear()
+    try:
+        with pytest.raises(ModelNotMappedError):
+            litellm.get_model_info("openai/fixture-private-v7.3")
+    finally:
+        GetModelCostMap._snapshot_loaded_catalog(original)
+        litellm.get_model_info.cache_clear()
+
+
+def test_compatible_registration_preserves_source_and_custom_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+    original: Final = GetModelCostMap.loaded_model_cost_map()
+    source: Final = "reseller/fixture-model-v7.3"
+    target: Final = "openai/fixture-model-v7.3"
+    row: Final = {
+        "litellm_provider": "reseller",
+        "mode": "chat",
+        "input_cost_per_token": 0.000002,
+        "output_cost_per_token": 0.000004,
+    }
+    monkeypatch.setattr(litellm, "model_cost", {source: dict(row)})
+    GetModelCostMap._snapshot_loaded_catalog({source: row})
+    litellm.get_model_info.cache_clear()
+    try:
+        litellm.register_model({target: {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}})
+        assert litellm.model_cost[source] == row
+        info: Final = litellm.get_model_info(target)
+        assert info["input_cost_per_token"] == 0
+        assert info["output_cost_per_token"] == 0
+        assert info["litellm_provider"] == "openai"
+    finally:
+        GetModelCostMap._snapshot_loaded_catalog(original)
+        litellm.get_model_info.cache_clear()

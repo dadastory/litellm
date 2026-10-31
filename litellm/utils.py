@@ -3550,7 +3550,13 @@ def register_model(
             )
             if builtin_model_info is not None:
                 existing_model = cast(dict, builtin_model_info)
-                model_cost_key = existing_model["key"]
+                builtin_key: Final = existing_model["key"]
+                builtin_provider: Final = litellm.model_cost.get(builtin_key, {}).get("litellm_provider")
+                model_cost_key = (
+                    key
+                    if builtin_provider and existing_model.get("litellm_provider") != builtin_provider
+                    else builtin_key
+                )
             else:
                 # An exact entry ends the lookup ladder before the capability rules are
                 # consulted, so seed from them: otherwise registering an unmapped model
@@ -3589,6 +3595,8 @@ def register_model(
         # ``_is_cost_explicitly_configured`` return True and silently
         # disables budget enforcement on the next re-registration.
         _raw_entry = litellm.model_cost.get(model_cost_key)
+        if _raw_entry is None:
+            _raw_entry = litellm.model_cost.get(existing_model.get("key"))
         if _raw_entry is None:
             _raw_entry = litellm.model_cost.get(key)
         if _raw_entry is None:
@@ -6301,6 +6309,30 @@ def get_model_info_helper(
                     _model_info = {
                         **{k: v for k, v in fill_missing.items() if k not in _model_info},
                         **_model_info,
+                    }
+
+            if _model_info is None:
+                from litellm.litellm_core_utils.get_model_cost_map import GetModelCostMap
+
+                loaded_catalog: Final = GetModelCostMap.loaded_model_cost_map()
+                catalog_identity: Final = split_model.rsplit("/", 1)[-1].strip().casefold()
+                catalog_reference: Final = next(
+                    (
+                        candidate
+                        for candidate in loaded_catalog
+                        if catalog_identity
+                        and "*" not in catalog_identity
+                        and candidate.rsplit("/", 1)[-1].casefold() == catalog_identity
+                        and isinstance(loaded_catalog[candidate].get("litellm_provider"), str)
+                    ),
+                    None,
+                )
+                if catalog_reference is not None:
+                    key = catalog_reference
+                    _model_info = {
+                        **loaded_catalog[catalog_reference],
+                        "litellm_provider": model_cost_custom_llm_provider
+                        or loaded_catalog[catalog_reference].get("litellm_provider"),
                     }
 
             if _model_info is None:

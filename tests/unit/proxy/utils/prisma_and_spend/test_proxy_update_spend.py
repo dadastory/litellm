@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 from typing import Any, Dict, Final, List
 from unittest.mock import AsyncMock, MagicMock
 
@@ -37,6 +38,67 @@ class _AsyncCM:
 
     async def __aexit__(self, *exc: Any) -> None:
         return None
+
+
+def test_spend_log_insert_uses_native_defaults_without_losing_rows_or_cost() -> None:
+    from litellm.repositories.table_repositories import SpendLogsRepository
+
+    rows: Final = (
+        {
+            "request_id": "nullable",
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+            "spend": 0.125,
+            "end_user": None,
+        },
+        {
+            "request_id": "observed",
+            "prompt_tokens": 0,
+            "completion_tokens": 4,
+            "total_tokens": 4,
+            "spend": 0.25,
+        },
+        {"request_id": "missing", "spend": 0.5},
+    )
+    create_many: Final = AsyncMock()
+    client: Final = SimpleNamespace(
+        db=SimpleNamespace(litellm_spendlogs=SimpleNamespace(create_many=create_many))
+    )
+    budget: Final = asyncio.run(
+        utils_mod._create_spend_logs_with_poison_isolation(
+            SpendLogsRepository(client), rows, 4
+        )
+    )
+    create_many.assert_awaited_once_with(
+        data=[
+            {"request_id": "nullable", "spend": 0.125, "end_user": None},
+            rows[1],
+            rows[2],
+        ],
+        skip_duplicates=True,
+    )
+    assert budget == 4
+    assert rows[0]["prompt_tokens"] is None
+
+
+def test_missing_required_prisma_value_is_not_a_disposable_poison_row() -> None:
+    from litellm.proxy.db.exception_handler import PrismaDBExceptionHandler
+    from prisma.errors import MissingRequiredValueError
+
+    error: Final = MissingRequiredValueError(
+        {
+            "user_facing_error": {
+                "error_code": "P2012",
+                "message": "Missing required token value",
+                "meta": {},
+            }
+        }
+    )
+    assert PrismaDBExceptionHandler.is_prisma_error(error)
+    assert not PrismaDBExceptionHandler.is_prisma_data_error(error)
+    assert not PrismaDBExceptionHandler.is_database_infrastructure_error(error)
+    assert not PrismaDBExceptionHandler.is_database_service_unavailable_error(error)
 
 
 @pytest.mark.asyncio

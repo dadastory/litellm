@@ -8402,7 +8402,17 @@ async def _create_spend_logs_with_poison_isolation(
     persist. Returns the budget left after this subtree.
     """
     try:
-        await repo.table.create_many(data=rows, skip_duplicates=True)
+        await repo.table.create_many(
+            data=[
+                {
+                    key: value
+                    for key, value in row.items()
+                    if value is not None or key not in ("prompt_tokens", "completion_tokens", "total_tokens")
+                }
+                for row in rows
+            ],
+            skip_duplicates=True,
+        )
         return failure_budget
     except Exception as e:
         if not (PrismaDBExceptionHandler.is_prisma_data_error(e) or isinstance(e, UnicodeEncodeError)):

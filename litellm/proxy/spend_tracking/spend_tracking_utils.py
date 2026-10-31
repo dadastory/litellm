@@ -506,6 +506,10 @@ def _scrub_raw_model_from_error_information(
     )
 
 
+def _spend_log_token_count(observed: int | None, fallback: int | None) -> int:
+    return observed if observed is not None else (fallback if fallback is not None else 0)
+
+
 def get_logging_payload(
     kwargs: dict | None,
     response_obj: object,
@@ -806,9 +810,9 @@ def get_logging_payload(
             metadata=safe_dumps(clean_metadata),
             cache_key=cache_key,
             spend=kwargs.get("response_cost", 0),
-            total_tokens=usage.get("total_tokens", standard_logging_total_tokens),
-            prompt_tokens=usage.get("prompt_tokens", standard_logging_prompt_tokens),
-            completion_tokens=usage.get("completion_tokens", standard_logging_completion_tokens),
+            total_tokens=_spend_log_token_count(usage.get("total_tokens"), standard_logging_total_tokens),
+            prompt_tokens=_spend_log_token_count(usage.get("prompt_tokens"), standard_logging_prompt_tokens),
+            completion_tokens=_spend_log_token_count(usage.get("completion_tokens"), standard_logging_completion_tokens),
             request_tags=request_tags,
             end_user=end_user_id or "",
             api_base=_api_base,

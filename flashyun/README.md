@@ -7,6 +7,8 @@ or independent provider implementation is introduced
 
 Maintained differences:
 
+- Inherit public catalog metadata by the same terminal model ID across transport providers, without an alias table; keep cross-provider registrations and custom zero prices on the requested channel key without changing the reference provider
+- Treat missing token observations consistently with native usage fallbacks and schema defaults, preserving queued spend rows, observed zero counts and calculated fees without broadening poison-row rejection
 - Compose shared extra-parameter drops with deployment and request additions without changing scalar precedence or persisted lists
 - Supplier-scoped HTTP/HTTPS proxy credentials and certificate policy, using native HTTPX transports and credential encryption; request context and native client-cache identity isolate concurrent routes. Native credential creation can inherit transport fields server-side for an additional supplier key.
 - Preserve native GenericResponseOutputItem text in the Chat Completions to Responses to Messages bridge.

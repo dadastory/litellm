@@ -54,6 +54,71 @@ from litellm.types.utils import (
 )
 
 
+@pytest.mark.parametrize(
+    "usage,fallback,expected",
+    [
+        ({}, None, (0, 0, 0)),
+        (
+            {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+            None,
+            (0, 0, 0),
+        ),
+        (
+            {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+            (None, None, None),
+            (0, 0, 0),
+        ),
+        (
+            {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+            (7, 8, 15),
+            (7, 8, 15),
+        ),
+        (
+            {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            (7, 8, 15),
+            (0, 0, 0),
+        ),
+        (
+            {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            (7, 8, 15),
+            (3, 4, 7),
+        ),
+    ],
+)
+def test_get_logging_payload_preserves_usage_while_defaulting_missing_observations(
+    usage: dict[str, int | None],
+    fallback: tuple[int | None, int | None, int | None] | None,
+    expected: tuple[int, int, int],
+) -> None:
+    now: Final = datetime.datetime(2026, 1, 1, tzinfo=timezone.utc)
+    standard: Final = (
+        {
+            **_make_standard_logging_payload_with_usage_object(usage_object={}),
+            "prompt_tokens": fallback[0],
+            "completion_tokens": fallback[1],
+            "total_tokens": fallback[2],
+        }
+        if fallback is not None
+        else None
+    )
+    payload: Final = get_logging_payload(
+        kwargs={
+            "model": "test-model",
+            "response_cost": 0.125,
+            "standard_logging_object": standard,
+        },
+        response_obj={"id": "test-null-usage", "usage": usage},
+        start_time=now,
+        end_time=now,
+    )
+    assert (
+        payload["prompt_tokens"],
+        payload["completion_tokens"],
+        payload["total_tokens"],
+    ) == expected
+    assert payload["spend"] == 0.125
+
+
 def _get_additional_usage_values_for_usage(usage: litellm.Usage) -> dict:
     payload = get_logging_payload(
         kwargs={
