@@ -2121,6 +2121,19 @@ class BaseLLMHTTPHandler:
                 should_retry = provider_config.should_retry_anthropic_messages_on_http_error(
                     e=e, litellm_params=litellm_params_dict, request_body=request_body
                 )
+                thinking: Final = request_body.get("thinking")
+                thinking_type: Final = thinking.get("type") if isinstance(thinking, dict) else None
+                safe_thinking_type: Final = (
+                    thinking_type if thinking_type in ("enabled", "disabled", "adaptive", None) else "other"
+                )
+                verbose_logger.warning(
+                    "Anthropic Messages HTTP error: status=%s attempt=%s/%s thinking=%s retry=%s",
+                    e.response.status_code,
+                    attempt_idx + 1,
+                    max_attempts,
+                    safe_thinking_type,
+                    should_retry and not hit_max_attempt,
+                )
                 if should_retry and not hit_max_attempt:
                     if logging_obj.baseline_cache_context is not None:
                         await logging_obj.invalidate_baseline_cache_estimate("retried_request")

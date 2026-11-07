@@ -5163,3 +5163,42 @@ async def test_anthropic_messages_dropped_safeguards_send_neither_the_field_nor_
     sent: Final = received[0]
     assert "safeguards" not in json.loads(sent.content)
     assert "dangerous-tool-use-2026-09-03" not in sent.headers.get("anthropic-beta", ""), dict(sent.headers)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_error_summary_omits_private_request_and_error_body(caplog: pytest.LogCaptureFixture) -> None:
+    from litellm.llms.anthropic.pass_through.messages.transformation import AnthropicMessagesConfig
+
+    request = httpx.Request("POST", "https://private.example/v1/messages")
+    response = httpx.Response(400, request=request, text="private upstream error body")
+    http_client = Mock()
+    http_client.post = AsyncMock(return_value=response)
+    logging_obj = Mock(baseline_cache_context=None)
+    logging_obj.model_call_details = {}
+    with caplog.at_level(logging.WARNING, logger=verbose_logger.name), pytest.raises(BaseLLMException):
+        await BaseLLMHTTPHandler()._async_post_anthropic_messages_with_http_error_retry(
+            async_httpx_client=http_client,
+            request_url=str(request.url),
+            headers={"x-api-key": "private-api-key"},
+            signed_json_body=None,
+            request_body={
+                "thinking": {"type": "disabled"},
+                "messages": [{"role": "user", "content": "private prompt"}],
+            },
+            stream=False,
+            logging_obj=logging_obj,
+            provider_config=AnthropicMessagesConfig(),
+            litellm_params=GenericLiteLLMParams(),
+            api_key="private-api-key",
+            model="private-model",
+        )
+    summaries = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Anthropic Messages HTTP error:")
+    ]
+    assert len(summaries) == 1
+    assert "status=400" in summaries[0]
+    assert "thinking=disabled" in summaries[0]
+    assert "retry=False" in summaries[0]
+    assert "private" not in summaries[0]

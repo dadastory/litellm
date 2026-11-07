@@ -1560,6 +1560,22 @@ class TestAnthropicThinkingSignatureSelfHeal:
         assert "thinking" not in data
         assert data["messages"] == []
 
+    def test_thinking_retry_preserves_explicit_disable(self):
+        from litellm.llms.anthropic.common_utils import (
+            strip_thinking_blocks_from_anthropic_messages_request_dict,
+        )
+
+        data = {
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "retained reasoning", "signature": "invalid"},
+                {"type": "text", "text": "answer"},
+            ]}],
+        }
+        strip_thinking_blocks_from_anthropic_messages_request_dict(data)
+        assert data["thinking"] == {"type": "disabled"}
+        assert data["messages"] == [{"role": "assistant", "content": [{"type": "text", "text": "answer"}]}]
+
     def test_strip_empty_content_blocks_from_anthropic_messages(self):
         """Covers #22930.  The core regression scenario: an assistant message
         with an empty text block alongside ``tool_use`` loses the empty block

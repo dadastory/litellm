@@ -1738,13 +1738,15 @@ def strip_thinking_blocks_from_anthropic_messages_request_dict(
     data: dict[str, Any],
 ) -> None:
     """
-    Mutate an Anthropic Messages-style request dict: strip thinking blocks from
-    ``messages`` and remove the top-level ``thinking`` extended-thinking param.
+    Strip replayed thinking blocks and active thinking controls, preserving an
+    explicit disable so recovery cannot enable a provider's default thinking.
     """
     msgs: Final = data.get("messages")
     if isinstance(msgs, list):
         data["messages"] = strip_thinking_blocks_from_anthropic_messages(msgs)
-    data.pop("thinking", None)
+    thinking: Final = data.get("thinking")
+    if not (isinstance(thinking, dict) and thinking.get("type") == "disabled"):
+        data.pop("thinking", None)
 
 
 def strip_empty_content_blocks_from_anthropic_messages(
