@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 _RESPONSES_API_PROVIDER_PREFIX: Final = "/openai"
-_RESPONSES_API_CREATE_ROUTES: Final = frozenset({"/v1/responses", "/responses"})
+_RESPONSES_API_ROUTES: Final = frozenset({"/v1/responses", "/responses"})
 _ADDRESSED_RESPONSE_ID_FIELD_BY_CALL_TYPE: Final[Mapping[str, str]] = MappingProxyType(
     {
         "aresponses": "previous_response_id",
@@ -104,7 +104,7 @@ def _rewrite_advertised_id(
     return event
 
 
-def _is_responses_api_create_route(request_route: str | None) -> bool:
+def _streams_response_ids(request_route: str | None) -> bool:
     if request_route is None:
         return False
     canonical: Final = (
@@ -112,7 +112,8 @@ def _is_responses_api_create_route(request_route: str | None) -> bool:
         if request_route.startswith(_RESPONSES_API_PROVIDER_PREFIX + "/")
         else request_route
     )
-    return canonical in _RESPONSES_API_CREATE_ROUTES
+    parent, _, response_id = canonical.rpartition("/")
+    return canonical in _RESPONSES_API_ROUTES or (parent in _RESPONSES_API_ROUTES and response_id != "")
 
 
 class ResponsesIDSecurity(CustomLogger):
@@ -140,12 +141,12 @@ class ResponsesIDSecurity(CustomLogger):
         )
         if not isinstance(addressed_id, str) or not addressed_id:
             return data
-        authorized_id: Final = self._authorize_response_id(addressed_id, user_api_key_dict)
+        authorized_id: Final = self.authorize_response_id(addressed_id, user_api_key_dict)
         data[addressed_id_field] = authorized_id
         data[ADDRESSED_RESPONSE_ID_FIELD] = addressed_id
         return data
 
-    def _authorize_response_id(
+    def authorize_response_id(
         self,
         response_id: str,
         user_api_key_dict: "UserAPIKeyAuth",
@@ -339,8 +340,14 @@ class ResponsesIDSecurity(CustomLogger):
         async for chunk in response:
             if (
                 isinstance(chunk, BaseLiteLLMOpenAIResponseObject)
-                and _is_responses_api_create_route(user_api_key_dict.request_route)
+                and _streams_response_ids(user_api_key_dict.request_route)
                 and not general_settings.get("disable_responses_id_security", False)
             ):
                 chunk = self._encrypt_response_id(chunk, user_api_key_dict, request_encryption_cache)
             yield chunk
+
+
+def decrypted_response_id(response_id: str) -> str:
+    """The id a client-facing response id stands for, the same for every encryption of one response."""
+    original_response_id, _, _ = ResponsesIDSecurity()._decrypt_response_id(response_id)
+    return original_response_id

@@ -408,6 +408,80 @@ class OutboundProxyTest(unittest.TestCase):
         finally:
             litellm.credential_list = previous
 
+    def test_native_saved_credential_discovery_preserves_proxy_policy(self):
+        previous = litellm.credential_list
+        with closing(socket.socket()) as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            unavailable = reserved.getsockname()[1]
+        try:
+            for provider in ("openai", "anthropic"):
+                for mode in ("enabled", "unavailable", "disabled"):
+                    with self.subTest(provider=provider, mode=mode):
+                        name = f"discovery-{provider}-{mode}"
+                        credential = CredentialItem(
+                            credential_name=name,
+                            credential_info={},
+                            credential_values={
+                                "api_key": name,
+                                **self.settings(
+                                    **(
+                                        {"proxy_url": f"http://127.0.0.1:{unavailable}"}
+                                        if mode == "unavailable"
+                                        else {}
+                                    )
+                                ),
+                            },
+                        )
+                        litellm.credential_list = [*previous, credential]
+                        params = {
+                            key: value
+                            for key, value in self.params(model=f"{provider}/*").items()
+                            if key not in PROXY_FIELDS and key != "api_key"
+                        }
+                        deployment = Deployment(
+                            model_name=f"{name}/*",
+                            litellm_params={
+                                **params,
+                                "litellm_credential_name": name,
+                                **({"proxy_enabled": "false"} if mode == "disabled" else {}),
+                            },
+                            model_info={"id": name},
+                        )
+                        before = len(self.proxy.calls)
+                        if mode == "unavailable":
+                            with self.assertRaises(httpx.ConnectError):
+                                _discover(deployment)
+                        else:
+                            self.assertTrue(_discover(deployment)["data"])
+                        self.assertEqual(len(self.proxy.calls) - before, int(mode == "enabled"))
+                        self.assertIsNone(current_outbound_proxy.get())
+        finally:
+            litellm.credential_list = previous
+
+    def test_module_clients_do_not_capture_request_proxy(self):
+        from litellm._lazy_imports import _lazy_import_http_handlers
+
+        previous = litellm.module_level_client, litellm.module_level_aclient
+        policy = parse_outbound_proxy(self.settings())
+        clients = []
+        try:
+            with outbound_proxy_scope(policy):
+                for name in ("module_level_client", "module_level_aclient"):
+                    client = _lazy_import_http_handlers(name)
+                    clients.append(client)
+                    self.assertIsNone(client.outbound_proxy)
+                    self.assertIs(current_outbound_proxy.get(), policy)
+        finally:
+            litellm.module_level_client, litellm.module_level_aclient = previous
+            for client in clients:
+                if any(client is saved for saved in previous):
+                    continue
+                if isinstance(client.client, httpx.AsyncClient):
+                    asyncio.run(client.client.aclose())
+                else:
+                    client.close()
+        self.assertIsNone(current_outbound_proxy.get())
+
 
 if __name__ == "__main__":
     unittest.main()

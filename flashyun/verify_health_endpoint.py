@@ -25,8 +25,9 @@ class NativeHealthEndpointTest(unittest.IsolatedAsyncioTestCase):
             model_info={"id": "selected", "team_id": "owner-team", "supported_endpoints": ["/v1/chat/completions"]},
         )
         self.router = Mock()
-        self.router.get_deployment.return_value = self.deployment
-        self.router.get_model_list.return_value = [self.deployment.model_dump(exclude_none=True)]
+        self.registry = self.router.registry.return_value
+        self.registry.deployment.return_value = self.deployment
+        self.registry.deployments.return_value = [self.deployment.model_dump(exclude_none=True)]
         self.health = AsyncMock(return_value={})
         self.auth = AsyncMock()
         for target, name, value in [
@@ -61,8 +62,8 @@ class NativeHealthEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["litellm_credential_name"], "stored-credential")
         self.assertFalse(params["use_chat_completions_api"])
         self.assertEqual(self.auth.call_args.kwargs["model_params"].model_info.team_id, "owner-team")
-        self.router.get_deployment.assert_called_once_with(model_id="selected")
-        self.router.get_model_list.assert_not_called()
+        self.registry.deployment.assert_called_once_with("selected")
+        self.registry.deployments.assert_not_called()
 
     async def test_different_credential_does_not_inherit_conversation_route(self):
         await self.check({"model": "openai/probe", "litellm_credential_name": "draft-credential"}, {"mode": "chat"})
@@ -79,11 +80,11 @@ class NativeHealthEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["model_info"]["supported_endpoints"], ["/v1/chat/completions"])
 
     async def test_missing_explicit_member_cannot_fall_back_to_same_name(self):
-        self.router.get_deployment.return_value = None
+        self.registry.deployment.return_value = None
         with self.assertRaises(HTTPException) as failure:
             await self.check({"model": "shared-name"}, {"id": "missing"})
         self.assertEqual(failure.exception.status_code, 404)
-        self.router.get_model_list.assert_not_called()
+        self.registry.deployments.assert_not_called()
         self.health.assert_not_awaited()
 
 

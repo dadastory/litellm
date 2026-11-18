@@ -9,9 +9,72 @@ import pytest
 import respx
 
 import litellm
+from litellm.cost_calculator import cost_per_token, pricing_entry_for_cost_calc
 from litellm.integrations.custom_logger import CustomLogger
+from litellm.litellm_core_utils.llm_cost_calc.utils import generic_cost_per_token, get_billed_token_rates
 from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
+from litellm.types.llms.base import CachedTokensDetails
 from litellm.types.utils import ModelResponse, PromptTokensDetailsWrapper, Usage
+
+
+@pytest.mark.parametrize("provider", ("ollama", "ollama_chat"))
+@pytest.mark.parametrize("registered", (False, True))
+@pytest.mark.parametrize("qualified", (False, True))
+def test_ollama_pricing_uses_registered_rates_without_contacting_the_server(
+    local_model_cost_map: None,
+    monkeypatch: pytest.MonkeyPatch,
+    respx_mock: respx.MockRouter,
+    provider: str,
+    registered: bool,
+    qualified: bool,
+) -> None:
+    model: Final = "test-ollama-pricing-registered" if registered else "test-ollama-pricing-unmapped"
+    monkeypatch.setenv("OLLAMA_API_BASE", "https://ambient-pricing.example")
+    metadata: Final = respx_mock.post("https://ambient-pricing.example/api/show").respond(
+        json={"model_info": {"test.context_length": 32768}}
+    )
+    if registered:
+        monkeypatch.setitem(
+            litellm.model_cost,
+            f"{provider}/{model}",
+            {
+                "litellm_provider": provider,
+                "mode": "chat",
+                "input_cost_per_token": 2e-06,
+                "output_cost_per_token": 5e-06,
+                "input_cost_per_token_decisions": 3e-06,
+                "output_cost_per_token_decisions": 7e-06,
+            },
+        )
+    usage: Final = Usage(prompt_tokens=100, completion_tokens=20, total_tokens=120)
+    cost_model: Final = f"{provider}/{model}" if qualified else model
+    cost_provider: Final = None if qualified else provider
+
+    assert cost_per_token(
+        model=cost_model, custom_llm_provider=cost_provider, usage_object=usage, call_type="systemone"
+    ) == pytest.approx((0.0003, 0.00014) if registered else (0.0, 0.0))
+    assert generic_cost_per_token(model=cost_model, custom_llm_provider=cost_provider, usage=usage) == pytest.approx(
+        (0.0002, 0.0001) if registered else (0.0, 0.0)
+    )
+    rates: Final = get_billed_token_rates(model=cost_model, custom_llm_provider=cost_provider, usage=usage)
+    assert rates is not None
+    assert (rates.input_cost_per_token, rates.output_cost_per_token) == (
+        (2e-06, 5e-06) if registered else (0.0, 0.0)
+    )
+    diagnostic: Final = pricing_entry_for_cost_calc(
+        model=cost_model,
+        completion_response=None,
+        custom_llm_provider=cost_provider,
+        custom_pricing=False,
+        base_model=None,
+        router_model_id=None,
+        region_name=None,
+        litellm_logging_obj=None,
+    )
+    assert diagnostic is not None
+    assert diagnostic[1]["input_cost_per_token"] == (2e-06 if registered else 0.0)
+    assert not metadata.called
+
 
 TIER_MODEL: Final = "tier-priced-test-model"
 TIER_ROW: Final[Mapping[str, float]] = MappingProxyType(
@@ -31,6 +94,20 @@ PROMPT_TOKENS: Final = 1000
 CACHED_TOKENS: Final = 200
 COMPLETION_TOKENS: Final = 500
 TIER_API_BASE: Final = "https://tier-pricing.invalid/v1"
+AUDIO_TIER_MODEL: Final = "tier-priced-gemini-audio-test-model"
+AUDIO_TIER_ROW: Final[Mapping[str, float]] = MappingProxyType(
+    {
+        "input_cost_per_token": 4e-06,
+        "output_cost_per_token": 8e-06,
+        "cache_read_input_token_cost": 1e-06,
+        "input_cost_per_audio_token": 3e-06,
+        "cache_read_input_audio_token_cost": 2e-06,
+        "input_cost_per_audio_token_flex": 1e-06,
+        "input_cost_per_audio_token_priority": 2e-06,
+        "cache_read_input_audio_token_cost_flex": 4e-07,
+        "cache_read_input_audio_token_cost_priority": 8e-07,
+    }
+)
 
 
 def _cost_at(prices: Mapping[str, float], column_suffix: str) -> float:
@@ -76,6 +153,53 @@ def test_completion_cost_bills_the_price_columns_of_the_service_tier(
     )
 
     assert cost == pytest.approx(_cost_at(TIER_ROW, column_suffix))
+
+
+@pytest.mark.parametrize(
+    ("service_tier", "audio_rate_key", "cache_audio_rate_key"),
+    (
+        pytest.param("flex", "input_cost_per_audio_token_flex", "cache_read_input_audio_token_cost_flex"),
+        pytest.param("priority", "input_cost_per_audio_token_priority", "cache_read_input_audio_token_cost_priority"),
+    ),
+)
+def test_gemini_audio_and_cached_audio_use_service_tier_rates(
+    local_model_cost_map: None, service_tier: str, audio_rate_key: str, cache_audio_rate_key: str
+) -> None:
+    litellm.register_model(
+        {
+            AUDIO_TIER_MODEL: {
+                "litellm_provider": "gemini",
+                "mode": "chat",
+                **AUDIO_TIER_ROW,
+            }
+        }
+    )
+    usage: Final = Usage(
+        prompt_tokens=40,
+        completion_tokens=0,
+        total_tokens=40,
+        prompt_tokens_details=PromptTokensDetailsWrapper(
+            text_tokens=20,
+            audio_tokens=20,
+            cached_tokens=10,
+            cached_tokens_details=CachedTokensDetails(audio_tokens=10),
+        ),
+    )
+    response: Final = ModelResponse(model=AUDIO_TIER_MODEL, usage=usage)
+
+    cost: Final = litellm.completion_cost(
+        completion_response=response,
+        model=AUDIO_TIER_MODEL,
+        custom_llm_provider="gemini",
+        service_tier=service_tier,
+    )
+
+    expected: Final = (
+        20 * AUDIO_TIER_ROW["input_cost_per_token"]
+        + 10 * AUDIO_TIER_ROW[audio_rate_key]
+        + 10 * AUDIO_TIER_ROW[cache_audio_rate_key]
+    )
+    assert cost == pytest.approx(expected)
 
 
 LONG_CONTEXT_TIER_MODEL: Final = "long-context-tier-priced-test-model"

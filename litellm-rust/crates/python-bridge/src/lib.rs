@@ -2,13 +2,14 @@ mod cache;
 mod callable;
 mod coercion;
 mod credentials;
+mod db;
 mod diagnostics;
 mod errors;
 mod execution;
 mod http;
-mod lifecycle;
 mod logger;
 mod marshal;
+mod model_registry;
 mod preflight;
 mod python_settings;
 mod routes;
@@ -21,6 +22,8 @@ mod _native {
     use litellm_host_python::{ForkedAfterNativeRuntimeStarted, ProcessReservedForForking};
     use pyo3::{prelude::*, types::PyModule};
 
+    #[pymodule_export]
+    use crate::db::NativeDatabase;
     #[cfg(feature = "panic-test")]
     #[pymodule_export]
     use crate::diagnostics::_panic_for_test;
@@ -31,9 +34,15 @@ mod _native {
     #[pymodule_export]
     use crate::logger::NativeDiagnosticProcessor;
     #[pymodule_export]
+    use crate::model_registry::bundled_model_cost_map;
+    #[pymodule_export]
     use crate::routes::audio_transcription::{atranscription, transcription};
     #[pymodule_export]
     use crate::routes::chat_completions::{acompletion, completion};
+    #[pymodule_export]
+    use crate::routes::clickhouse_spend::{
+        NativeClickHouseSpendConfig, NativeClickHouseSpendStorage,
+    };
     #[pymodule_export]
     use crate::routes::embeddings::{aembedding, embedding};
     #[pymodule_export]
@@ -45,9 +54,7 @@ mod _native {
     #[pymodule_export]
     use crate::routes::token_counter::TokenCounter;
     #[pymodule_export]
-    use crate::routes::traces::{
-        NativeTraceConfig, NativeTraceStorage, trace_encode_error, trace_span_rows,
-    };
+    use crate::routes::traces::trace_encode_error;
     #[cfg(feature = "huggingface")]
     #[pymodule_export]
     use crate::tokenizer::HuggingFaceEncoding;
@@ -106,10 +113,11 @@ mod tests {
                 "aresponses",
                 "ResponsesWebSocketConnection",
                 "NativeDiagnosticProcessor",
-                "NativeTraceConfig",
-                "NativeTraceStorage",
+                "NativeClickHouseSpendConfig",
+                "NativeClickHouseSpendStorage",
+                "NativeDatabase",
                 "trace_encode_error",
-                "trace_span_rows",
+                "bundled_model_cost_map",
                 "TokenCounter",
                 "Tokenizer",
                 "gil_stats",

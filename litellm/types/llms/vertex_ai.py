@@ -1,5 +1,6 @@
+from collections.abc import Sequence
 from enum import Enum
-from typing import Any, Final, Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from typing_extensions import (
     ReadOnly,
@@ -139,7 +140,7 @@ class Schema(TypedDict, total=False):
     title: str
     description: str
     nullable: bool
-    default: Any
+    default: ReadOnly[object]
     items: "Schema"
     minItems: str
     maxItems: str
@@ -154,7 +155,7 @@ class Schema(TypedDict, total=False):
     minLength: str
     maxLength: str
     pattern: str
-    example: Any
+    example: ReadOnly[object]
     anyOf: list["Schema"]
 
 
@@ -238,8 +239,18 @@ class VoiceConfig(TypedDict):
     prebuiltVoiceConfig: PrebuiltVoiceConfig
 
 
+class SpeakerVoiceConfig(TypedDict):
+    speaker: ReadOnly[str]
+    voiceConfig: ReadOnly[VoiceConfig]
+
+
+class MultiSpeakerVoiceConfig(TypedDict):
+    speakerVoiceConfigs: ReadOnly[Sequence[SpeakerVoiceConfig]]
+
+
 class SpeechConfig(TypedDict, total=False):
     voiceConfig: VoiceConfig
+    multiSpeakerVoiceConfig: ReadOnly[MultiSpeakerVoiceConfig]
     languageCode: str
 
 
@@ -359,12 +370,13 @@ class RequestBody(TypedDict, total=False):
     cachedContent: str
     labels: dict[str, str]
     serviceTier: str
+    continuationToken: str  # writable-ok: transform_request_body fills the body field by field
 
 
 class CachedContentRequestBody(TypedDict, total=False):
     contents: Required[list[ContentType]]
     system_instruction: SystemInstructions
-    tools: Tools
+    tools: Tools | None
     toolConfig: ToolConfig
     model: Required[str]  # Format: models/{model}
     ttl: str  # ending in 's' - Example: "3.5s".
@@ -399,8 +411,9 @@ class Citation(TypedDict):
     publicationDate: Date
 
 
-class CitationMetadata(TypedDict):
-    citations: list[Citation]
+class CitationMetadata(TypedDict, total=False):
+    citations: ReadOnly[Sequence[Citation]]
+    citationSources: ReadOnly[Sequence[Citation]]
 
 
 class SearchEntryPoint(TypedDict, total=False):
@@ -408,10 +421,24 @@ class SearchEntryPoint(TypedDict, total=False):
     sdkBlob: str
 
 
+class GroundingSegment(TypedDict, total=False):
+    partIndex: ReadOnly[int]
+    startIndex: ReadOnly[int]
+    endIndex: ReadOnly[int]
+    text: ReadOnly[str]
+
+
+class GroundingSupport(TypedDict, total=False):
+    segment: ReadOnly[GroundingSegment]
+    groundingChunkIndices: ReadOnly[Sequence[int]]
+    confidenceScores: ReadOnly[Sequence[float]]
+
+
 class GroundingMetadata(TypedDict, total=False):
     webSearchQueries: list[str]
     searchEntryPoint: SearchEntryPoint
     groundingAttributions: list[dict]
+    groundingSupports: ReadOnly[Sequence[GroundingSupport]]
 
 
 class LogprobsCandidate(TypedDict):
@@ -442,6 +469,7 @@ GeminiFinishReason = Literal[
     "FINISH_REASON_UNSPECIFIED",
     "STOP",
     "MAX_TOKENS",
+    "CONTINUATION",
     "SAFETY",
     "RECITATION",
     "LANGUAGE",
@@ -468,11 +496,12 @@ class Candidates(TypedDict, total=False):
     content: HttpxContentType
     finishReason: GeminiFinishReason
     safetyRatings: list[SafetyRatings]
-    citationMetadata: CitationMetadata
-    groundingMetadata: GroundingMetadata
+    citationMetadata: CitationMetadata | tuple[CitationMetadata, ...]
+    groundingMetadata: GroundingMetadata | tuple[GroundingMetadata, ...]
     finishMessage: str
     logprobsResult: LogprobsResult
-    urlContextMetadata: UrlContextMetadata
+    urlContextMetadata: UrlContextMetadata | tuple[UrlContextMetadata, ...]
+    continuationToken: ReadOnly[str]
 
 
 class PromptFeedback(TypedDict):
@@ -765,9 +794,9 @@ class VertexVideoGenerationResponse(TypedDict, total=False):
 
     name: str
     done: bool
-    response: dict[str, Any]
-    metadata: dict[str, Any]
-    error: dict[str, Any]
+    response: ReadOnly[dict[str, object]]
+    metadata: ReadOnly[dict[str, object]]
+    error: ReadOnly[dict[str, object]]
 
 
 VERTEX_CREDENTIALS_TYPES = str | dict[str, str]

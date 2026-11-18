@@ -6,6 +6,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
+from litellm.llms.custom_httpx.outbound_proxy import outbound_proxy_scope, resolve_outbound_proxy
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.model_checks import (
     _hydrate_litellm_credential_name,
@@ -20,6 +21,8 @@ router: Final = APIRouter()
 
 
 def _discover(deployment: Deployment) -> dict[str, list[dict[str, str]]]:
+    # Native credential hydration clears the name and only copies provider fields.
+    policy: Final = resolve_outbound_proxy(deployment.litellm_params.model_dump(exclude_none=True))
     params: Final = _hydrate_litellm_credential_name(deployment.litellm_params)
     provider: Final = params.model.split("/", 1)[0]
     config: Final = ProviderConfigManager.get_provider_model_info(model=None, provider=LlmProviders(provider))
@@ -29,9 +32,7 @@ def _discover(deployment: Deployment) -> dict[str, list[dict[str, str]]]:
     # provider calls are never inserted as successful empty results.
     cached: Final = _model_cache.get_cached_model_info(provider, params)
     if cached is None:
-        from litellm.llms.custom_httpx.outbound_proxy import outbound_proxy_scope, resolve_outbound_proxy
-
-        with outbound_proxy_scope(resolve_outbound_proxy(params.model_dump(exclude_none=True))):
+        with outbound_proxy_scope(policy):
             discovered: Final = config.discover_models(params.model_dump(exclude_none=True))
         _model_cache.set_cached_model_info(provider, params, discovered)
     return {"data": [{"id": model} for model in get_known_models_from_wildcard(deployment.model_name, params)]}

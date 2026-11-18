@@ -19,7 +19,7 @@ import importlib
 import sys
 from collections.abc import Callable, Mapping
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final
 
 from typing_extensions import ReadOnly, TypedDict
 
@@ -456,11 +456,15 @@ def _lazy_import_http_handlers(name: str) -> object:
         params: Final = {"timeout": async_timeout, "client_alias": "module level aclient"}
 
         # Create the client instance
-        provider_id: Final = cast(Any, "litellm_module_level_client")
-        async_client: Final = get_async_httpx_client(
-            llm_provider=provider_id,
-            params=params,
-        )
+        provider_id: Final = "litellm_module_level_client"
+        from litellm.llms.custom_httpx.outbound_proxy import outbound_proxy_scope
+
+        # Process-wide clients must not retain the first request's supplier proxy.
+        with outbound_proxy_scope(None):
+            async_client: Final = get_async_httpx_client(
+                llm_provider=provider_id,
+                params=params,
+            )
 
         # Cache it so we don't create it again
         _globals["module_level_aclient"] = async_client
@@ -469,9 +473,11 @@ def _lazy_import_http_handlers(name: str) -> object:
     if name == "module_level_client":
         # Create a sync HTTP client
         from litellm.llms.custom_httpx.http_handler import HTTPHandler
+        from litellm.llms.custom_httpx.outbound_proxy import outbound_proxy_scope
 
         sync_timeout: Final = _get_module_level_client_timeout(_globals)
-        sync_client: Final = HTTPHandler(timeout=sync_timeout)
+        with outbound_proxy_scope(None):
+            sync_client: Final = HTTPHandler(timeout=sync_timeout)
 
         # Cache it
         _globals["module_level_client"] = sync_client
